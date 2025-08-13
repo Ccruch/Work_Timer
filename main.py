@@ -308,13 +308,13 @@ class WorkTimerApp:
         if now.date() != self.record_date:
             self.off_work_recorded = False
             self.record_date = now.date()
-        if (not self.off_work_recorded) and (now - self.last_mouse_move).total_seconds() >= 10:
+        if (not self.off_work_recorded) and (now - self.last_mouse_move).total_seconds() >= 300:
             date_str = now.strftime('%Y-%m-%d')
             time_str = now.strftime('%H:%M')
             self.add_manual_record(date_str, time_str, '自动下班', 'end')
             self.off_work_recorded = True
         # 每分钟检查一次
-        self.root.after(100, self.check_inactivity)
+        self.root.after(60000, self.check_inactivity)
 
 if __name__ == "__main__":
     root = tk.Tk()
