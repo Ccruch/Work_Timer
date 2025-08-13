@@ -33,6 +33,13 @@ class WorkTimerApp:
         # 直接关闭窗口
         self.root.protocol("WM_DELETE_WINDOW", self.root.destroy)
 
+        # 鼠标活动监控
+        self.last_mouse_move = datetime.datetime.now()
+        self.off_work_recorded = False
+        self.record_date = datetime.date.today()
+        self.root.bind_all("<Motion>", self.on_mouse_move)
+        self.check_inactivity()
+
     def ensure_data_file_exists(self):
         """确保数据文件存在，如果不存在则创建"""
         if not os.path.exists(DATA_FILE):
@@ -212,21 +219,38 @@ class WorkTimerApp:
         # 读取现有记录
         records = self.load_records()
 
-        # 检查是否已有当天记录
-        today_record = next((r for r in records if r['date'] == date), None)
+        # 尝试合并自动上下班记录，若无法匹配再追加
+        matched = False
+        def _time_to_minutes(t):
+            try:
+                h, m = map(int, t.split(":"))
+                return h * 60 + m
+            except Exception:
+                return None
 
-        if today_record:
-            # 如果已有当天记录，更新对应字段
-            if record_type == "start":
-                  # 将时间截断到分钟
-                  today_record['start_time'] = time[:5] if len(time) >= 5 else time
-            else:  # record_type == "end"
-                # 将时间截断到分钟
-                today_record['end_time'] = time[:5] if len(time) >= 5 else time
-            # 更新备注
-            today_record['note'] = note if note else today_record.get('note', '')
-        else:
-            # 如果没有当天记录，创建新记录
+        if record_type == "start":
+            # 查找同一天最后一个仅有下班时间且新上班时间早于该下班时间的记录
+            for rec in reversed(records):
+                if rec['date'] == date and rec.get('start_time', '-') == '-' and rec.get('end_time', '-') != '-':
+                    end_minutes = _time_to_minutes(rec['end_time'])
+                    start_minutes = _time_to_minutes(time[:5])
+                    if end_minutes is not None and start_minutes is not None and start_minutes <= end_minutes:
+                        rec['start_time'] = time[:5]
+                        rec['note'] = note if note else rec.get('note', '')
+                        matched = True
+                        break
+        else:  # record_type == "end"
+            # 查找同一天最后一个仅有上班时间且该上班时间早于本次下班时间的记录
+            for rec in reversed(records):
+                if rec['date'] == date and rec.get('end_time', '-') == '-' and rec.get('start_time', '-') != '-':
+                    start_minutes = _time_to_minutes(rec['start_time'])
+                    end_minutes = _time_to_minutes(time[:5])
+                    if start_minutes is not None and end_minutes is not None and start_minutes <= end_minutes:
+                        rec['end_time'] = time[:5]
+                        rec['note'] = note if note else rec.get('note', '')
+                        matched = True
+                        break
+        if not matched:
             new_record = {
                 'date': date,
                 'start_time': time[:5] if (record_type == "start" and len(time) >= 5) else '-',
@@ -264,6 +288,33 @@ class WorkTimerApp:
         
         # 1秒后自动关闭
         top.after(1000, top.destroy)
+
+    def on_mouse_move(self, event=None):
+        """更新最后一次鼠标移动时间，并在自动下班后自动上班"""
+        now = datetime.datetime.now()
+        # 若之前已自动下班，首次移动即自动上班
+        if self.off_work_recorded:
+            date_str = now.strftime('%Y-%m-%d')
+            time_str = now.strftime('%H:%M')
+            self.add_manual_record(date_str, time_str, '自动上班', 'start')
+            self.off_work_recorded = False
+        # 更新最后移动时间
+        self.last_mouse_move = now
+
+    def check_inactivity(self):
+        """检查鼠标是否长时间未移动，若超过5分钟则自动记录下班"""
+        now = datetime.datetime.now()
+        # 新的一天重置下班标志
+        if now.date() != self.record_date:
+            self.off_work_recorded = False
+            self.record_date = now.date()
+        if (not self.off_work_recorded) and (now - self.last_mouse_move).total_seconds() >= 10:
+            date_str = now.strftime('%Y-%m-%d')
+            time_str = now.strftime('%H:%M')
+            self.add_manual_record(date_str, time_str, '自动下班', 'end')
+            self.off_work_recorded = True
+        # 每分钟检查一次
+        self.root.after(100, self.check_inactivity)
 
 if __name__ == "__main__":
     root = tk.Tk()
